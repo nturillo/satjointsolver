@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
 
     let num_graphs = lines.len();
-    println!("Number of graphs read: {}", num_graphs);
+    println!("Read: {} graphs from {}", num_graphs, infile_str);
 
     let graph0 = Graph::from_graph6(&lines[0]);
     let deg = graph0.neighbor_set(0).count_ones() as usize;
