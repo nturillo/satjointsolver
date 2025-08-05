@@ -28,7 +28,7 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     // Parse command line arguments
     let args = Args::parse();
-    let x = args.x;
+    let mut x = args.x;
     let infile_str = args.input;
 
     let path = Path::new(&infile_str);
@@ -48,9 +48,38 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     // Convert each line from graph6 format to a Graph object, create the SAT problem, and solve it
     let start = std::time::Instant::now();
+    let mut glued_graphs = get_glued_graphs(&lines, x);
+    let duration = start.elapsed();
+    println!("Time taken: {:?}", duration);
+    let time_per_graph = duration.as_secs_f64() / num_graphs as f64;
+    println!("Average time per graph: {:.2} seconds", time_per_graph);
+
+    while glued_graphs.len() > 0 {
+        glued_graphs.clear();
+        x = x + 1;
+        if x > 1 {
+            todo!("x > 1 is not implemented yet, please implement the logic to handle x > 1");
+        }
+        println!("Found {} glued graphs, continuing with x = {}", glued_graphs.len(), x);
+        let start = std::time::Instant::now();
+        glued_graphs = get_glued_graphs(&lines, x);
+        let duration = start.elapsed();
+        println!("Time taken for x = {}: {:?}", x, duration);
+        let time_per_graph = duration.as_secs_f64() / num_graphs as f64;
+        println!("Average time per graph for x = {}: {:.2} seconds", x, time_per_graph);
+    }
+
+    Ok(())
+}
+
+fn get_glued_graphs(lines: &[String], x: usize) -> Vec<Graph> {
+    let graph0 = Graph::from_graph6(&lines[0]);
+    let deg = graph0.neighbor_set(0).count_ones() as usize;
+    let K_size = (graph0.neighbor_set(0) & graph0.neighbor_set(1)).count_ones() as usize;
+
     let edge_to_var = get_edge_to_var(deg, K_size, x);
-    let glued_graphs: Vec<Graph> = lines.into_par_iter().filter_map(|line| {
-        let graph = Graph::from_graph6(&line);
+    lines.par_iter().filter_map(|line| {
+        let graph = Graph::from_graph6(line);
         let ext_graph = graph.extend(x);
         let sat_problem = create_sat_problem(&ext_graph, &edge_to_var);
         let mut sat_solver: Solver = Default::default();
@@ -59,14 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         });
         sat_solver.solve().expect("Failed to solve SAT problem");
         Graph::from_sat_sol(&graph, &sat_problem, &sat_solver)
-    }).collect();
-
-    println!("Number of glued graphs found: {}", glued_graphs.len());
-
-    let duration = start.elapsed();
-    println!("Time taken: {:?}", duration);
-
-    Ok(())
+    }).collect()
 }
 
 #[derive(Debug, Clone)]
