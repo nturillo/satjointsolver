@@ -1,9 +1,9 @@
 #![allow(non_snake_case)]
-use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, Write};
+use std::fs::File;
+use std::io::{self, BufRead};
 use std::path::Path;
 use mimalloc::MiMalloc;
-use itertools::{any, iproduct, Itertools};
+use itertools::{iproduct, Itertools};
 use std::collections::HashMap;
 use cadical::Solver;
 use rayon::prelude::*;
@@ -268,7 +268,7 @@ fn decode_g6(line: &String) -> Vec<u32> {
     graph
 }
 
-fn graph_to_g6(graph: &Graph) -> String {
+fn _graph_to_g6(graph: &Graph) -> String {
     let num_vertices = u8::try_from(graph.num_vertices()).expect("num_vertices exceeds u8 limit");
     let size = u16::from(num_vertices) * (u16::from(num_vertices) - 1) / 2;
     let mut bit_vect: Vec<u8> = vec![0; size.into()];
