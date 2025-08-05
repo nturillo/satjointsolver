@@ -43,6 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let deg = graph0.neighbor_set(0).count_ones() as usize;
     let K_size = (graph0.neighbor_set(0) & graph0.neighbor_set(1)).count_ones() as usize;
 
+    println!("Graph degree: {}", deg);
+    println!("K size: {}", K_size);
+
     // Convert each line from graph6 format to a Graph object, create the SAT problem, and solve it
     let start = std::time::Instant::now();
     let edge_to_var = get_edge_to_var(deg, K_size, x);
