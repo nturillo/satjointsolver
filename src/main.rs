@@ -1,33 +1,47 @@
 #![allow(non_snake_case)]
-use core::num;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use std::env;
 use mimalloc::MiMalloc;
 use itertools::{any, iproduct, Itertools};
-use std::collections::HashSet;
 use std::collections::HashMap;
 use cadical::Solver;
 use rayon::prelude::*;
+use clap::Parser;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    // input file path
+    #[arg(short, long)]
+    input: String,
+
+    // degree of the graphs to be glued
+    #[arg(short, long)]
+    deg: usize,
+
+    // size of K in F
+    #[arg(short, long)]
+    K_size: usize,
+
+    // number of vertices to add in vertex extension, x
+    #[arg(short, long, default_value_t = 0)]
+    x: usize,
+}
+
 
 fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
-    let deg = 15; // degree of a/b in the unglued graph
-    let K_size = 6; // number of vertices adjacent to both a and b in the unglued graph
-    let x = 0; // number of vertices to add in vertex extension
+    // Parse command line arguments
+    let args = Args::parse();
+    let x = args.x;
+    let infile_str = args.input;
+    let deg = args.deg;
+    let K_size = args.K_size;
 
-    let path_str = "../../pastings/case".to_string()
-        + &deg.to_string()
-        + "/d"
-        + &K_size.to_string()
-        + "_case"
-        + &deg.to_string()
-        + "_pastes_unique.g6";
-    let path = Path::new(&path_str);
+    let path = Path::new(&infile_str);
     let file = File::open(&path)?;
     let reader = io::BufReader::new(file);
     let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
@@ -129,7 +143,7 @@ pub struct SatProblem<'a> {
     pub edge_to_var: &'a HashMap<(usize, usize), u32>,
 }
 fn create_sat_problem<'a>(graph: &Graph, edge_to_var: &'a HashMap<(usize, usize), u32>) -> SatProblem<'a> {
-    let clauses = get_glue_clauses(graph, &edge_to_var);
+    let clauses = get_clauses(graph, &edge_to_var);
     SatProblem { clauses, edge_to_var }
 }
 
@@ -155,7 +169,7 @@ fn get_edge_to_var(deg: usize, K_size: usize, x: usize) -> HashMap<(usize, usize
     edge_to_var
 }
 
-fn get_glue_clauses(graph: &Graph, edge_to_var: &HashMap<(usize, usize), u32>) -> Vec<Vec<i32>> {
+fn get_clauses(graph: &Graph, edge_to_var: &HashMap<(usize, usize), u32>) -> Vec<Vec<i32>> {
     let mut clauses: Vec<Vec<i32>> = Vec::new();
 
     let num_vertices = graph.num_vertices();
@@ -255,5 +269,30 @@ fn decode_g6(line: &String) -> Vec<u32> {
         }
     }
     graph
+}
 
+fn graph_to_g6(graph: &Graph) -> String {
+    let num_vertices = u8::try_from(graph.num_vertices()).expect("num_vertices exceeds u8 limit");
+    let size = u16::from(num_vertices) * (u16::from(num_vertices) - 1) / 2;
+    let mut bit_vect: Vec<u8> = vec![0; size.into()];
+
+    let mut i = 0;
+    for column in 1..num_vertices {
+        for row in 0..column {
+            let bit = graph.has_edge(row as usize, column as usize);
+            bit_vect[i] = bit as u8;
+            i += 1;
+        }
+    }
+
+    let mut g6_str = String::new();
+    g6_str.push((num_vertices + 63) as char);
+    for chunk in bit_vect.chunks(6) {
+        let mut fixed_letter = 0;
+        for (j, &bit) in chunk.iter().enumerate() {
+            fixed_letter |= bit << (5 - j);
+        }
+        g6_str.push((fixed_letter + 63) as char);
+    }
+    g6_str
 }
