@@ -18,15 +18,7 @@ struct Args {
     // input file path
     #[arg(short, long)]
     input: String,
-
-    // degree of the graphs to be glued
-    #[arg(short, long)]
-    deg: usize,
-
-    // size of K in F
-    #[arg(short, long)]
-    K_size: usize,
-
+    
     // number of vertices to add in vertex extension, x
     #[arg(short, long, default_value_t = 0)]
     x: usize,
@@ -38,16 +30,18 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let args = Args::parse();
     let x = args.x;
     let infile_str = args.input;
-    let deg = args.deg;
-    let K_size = args.K_size;
 
     let path = Path::new(&infile_str);
     let file = File::open(&path)?;
     let reader = io::BufReader::new(file);
     let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
 
+    let num_graphs = lines.len();
+    println!("Number of graphs read: {}", num_graphs);
 
-    println!("Number of graphs read: {}", lines.len());
+    let graph0 = Graph::from_graph6(&lines[0]);
+    let deg = graph0.neighbor_set(0).count_ones() as usize;
+    let K_size = (graph0.neighbor_set(0) & graph0.neighbor_set(1)).count_ones() as usize;
 
     // Convert each line from graph6 format to a Graph object, create the SAT problem, and solve it
     let start = std::time::Instant::now();
