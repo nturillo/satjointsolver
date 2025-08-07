@@ -69,6 +69,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         println!("Average time per graph for x = {}: {:.2} seconds", x, time_per_graph);
     }
 
+    if glued_graphs.is_empty() {
+        println!("No glued graphs found for x = {}", x);
+    } else {
+        println!("Found {} glued graphs for x = {}", glued_graphs.len(), x);
+    }
+
     Ok(())
 }
 
