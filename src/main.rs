@@ -47,44 +47,38 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     println!("K size: {}", K_size);
 
     // Convert each line from graph6 format to a Graph object, create the SAT problem, and solve it
-    let start = std::time::Instant::now();
-    let mut glued_graphs = get_glued_graphs(&lines, x);
-    let duration = start.elapsed();
-    println!("Time taken: {:?}", duration);
-    let time_per_graph = duration.as_secs_f64() / num_graphs as f64;
-    println!("Average time per graph: {:.2} seconds", time_per_graph);
-
-    while glued_graphs.len() > 0 {
-        glued_graphs.clear();
-        x = x + 1;
+    let mut start = std::time::Instant::now();
+    while let Some(glued_graph) = get_glued_graph(&lines, x) {
+        println!("Found glued graph with {} vertices, including {} extension vertices", glued_graph.num_vertices(), x);
+        println!("Time taken: {:?}", start.elapsed());
+        println!("Glued graph in graph6 format: {}", _graph_to_g6(&glued_graph));
+        x = x+1;
         if x > 1 {
             todo!("x > 1 is not implemented yet, please implement the logic to handle x > 1");
         }
-        println!("Found {} glued graphs, continuing with x = {}", glued_graphs.len(), x);
-        let start = std::time::Instant::now();
-        glued_graphs = get_glued_graphs(&lines, x);
-        let duration = start.elapsed();
-        println!("Time taken for x = {}: {:?}", x, duration);
-        let time_per_graph = duration.as_secs_f64() / num_graphs as f64;
-        println!("Average time per graph for x = {}: {:.2} seconds", x, time_per_graph);
+        start = std::time::Instant::now();
+        println!("Continuing with x = {}", x);
     }
-
-    if glued_graphs.is_empty() {
-        println!("No glued graphs found for x = {}", x);
-    } else {
-        println!("Found {} glued graphs for x = {}", glued_graphs.len(), x);
-    }
+    println!("No glued graph found with {} extension vertices", x);
+    let duration = start.elapsed();
+    println!("Time taken: {:?}", duration);
 
     Ok(())
 }
 
-fn get_glued_graphs(lines: &[String], x: usize) -> Vec<Graph> {
+fn get_glued_graph(lines: &[String], x: usize) -> Option<Graph> {
+    //
+    // This function takes a slice of graph6 strings and an integer x,
+    // and tries to find a gluing of a graph from the input lines which
+    // contains x many extension vertices. As soon as one such graph is found,
+    // it returns it as a `Graph` object.
+    // 
     let graph0 = Graph::from_graph6(&lines[0]);
     let deg = graph0.neighbor_set(0).count_ones() as usize;
     let K_size = (graph0.neighbor_set(0) & graph0.neighbor_set(1)).count_ones() as usize;
 
     let edge_to_var = get_edge_to_var(deg, K_size, x);
-    lines.par_iter().filter_map(|line| {
+    lines.par_iter().find_map_any(|line| {
         let graph = Graph::from_graph6(line);
         let ext_graph = graph.extend(x);
         let sat_problem = create_sat_problem(&ext_graph, &edge_to_var);
@@ -94,7 +88,7 @@ fn get_glued_graphs(lines: &[String], x: usize) -> Vec<Graph> {
         });
         sat_solver.solve().expect("Failed to solve SAT problem");
         Graph::from_sat_sol(&graph, &sat_problem, &sat_solver)
-    }).collect()
+    })
 }
 
 #[derive(Debug, Clone)]
