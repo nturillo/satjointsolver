@@ -381,4 +381,37 @@ mod tests {
         }
         // println!("edge sets: {:?}", sat_precursor.edge_sets);
     }
+    #[test]
+    fn test_clauses() {
+        let graph = Graph::from_graph6(&String::from("TiXAIa?_C@O?_@_C]UVhguebKKfBAUUUb~~?"));
+        let sat_precursor = get_sat_precursor(14, 7, 0);
+        let sat_problem = create_sat_problem(&graph, &sat_precursor);
+     }
+    #[test]
+    fn test_SAT_solution() {
+        let graph = Graph::from_graph6(&String::from("TiXAIa?_C@O?_@_C]UVhguebKKfBAUUUb~~?"));
+        let sat_precursor = get_sat_precursor(14, 7, 0);
+        let sat_problem = create_sat_problem(&graph, &sat_precursor);
+        let mut sat_solver: Solver = Default::default();
+        let solution = 
+            vec![-24, -33, 34, -25, -4, -10, 19, 36, -6, 27, -28, -13, 22, 9, 11, 15, 5, 2, -7, -17, 30, 31, 20, -35, 1, 18, -14, 8, -32, -3, -23, -26, 29, -12, 16, -21];
+        assert!(sat_precursor.edge_to_var.len() == solution.len(), "Edge to variable mapping size does not match solution size");
+        sat_problem.clauses.iter().for_each(|clause| {
+            sat_solver.add_clause(clause.clone());
+        });
+        sat_solver.solve_with(solution).expect("Failed to solve SAT problem with given solution");
+        let culprit_edges = sat_precursor.edge_to_var
+            .iter()
+            .filter_map(|(edge, var)| {
+                if sat_solver.failed(i32::try_from(*var).expect("Failed to convert var index to i32")) {
+                    Some(edge)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        println!("Culprit edges: {:?}", culprit_edges);
+        println!("num vars in sat problem: {}", sat_solver.num_variables());
+        assert!(sat_solver.status().expect("Failed to get solver status"), "SAT solver did not find a solution");
+    }
 }
