@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     while let Some(glued_graph) = get_glued_graph(&lines, x) {
         println!("Found glued graph with {} vertices, including {} extension vertices", glued_graph.num_vertices(), x);
         println!("Time taken: {:?}", start.elapsed());
-        println!("Glued graph in graph6 format: {}", _graph_to_g6(&glued_graph));
+        println!("Glued graph in graph6 format: {}", graph_to_g6(&glued_graph));
         x = x+1;
         if x > 1 {
             todo!("x > 1 is not implemented yet, please implement the logic to handle x > 1");
@@ -77,11 +77,11 @@ fn get_glued_graph(lines: &[String], x: usize) -> Option<Graph> {
     let deg = graph0.neighbor_set(0).count_ones() as usize;
     let K_size = (graph0.neighbor_set(0) & graph0.neighbor_set(1)).count_ones() as usize;
 
-    let edge_to_var = get_edge_to_var(deg, K_size, x);
+    let sat_precursor = get_sat_precursor(deg, K_size, x);
     lines.par_iter().find_map_any(|line| {
         let graph = Graph::from_graph6(line);
         let ext_graph = graph.extend(x);
-        let sat_problem = create_sat_problem(&ext_graph, &edge_to_var);
+        let sat_problem = create_sat_problem(&ext_graph, &sat_precursor);
         let mut sat_solver: Solver = Default::default();
         sat_problem.clauses.iter().for_each(|clause| {
             sat_solver.add_clause(clause.clone());
@@ -103,12 +103,12 @@ impl Graph {
         let num_vertices = adjacency_matrix.len();
         Graph { num_vertices, adjacency_matrix}
     }
-    fn has_edge(&self, u: usize, v: usize) -> bool {
-        self.adjacency_matrix[u] & self.get_bit(v) != 0
+    fn has_edge(&self, edge: Edge) -> bool {
+        self.adjacency_matrix[edge.0] & self.get_bit(edge.1) != 0
     }
-    fn add_edge(&mut self, u: usize, v: usize) {
-        self.adjacency_matrix[u] |= self.get_bit(v);
-        self.adjacency_matrix[v] |= self.get_bit(u);
+    fn add_edge(&mut self, edge: Edge) {
+        self.adjacency_matrix[edge.0] |= self.get_bit(edge.1);
+        self.adjacency_matrix[edge.1] |= self.get_bit(edge.0);
     }
     fn neighbor_set(&self, u: usize) -> BitSet {
         self.adjacency_matrix[u]
@@ -141,13 +141,13 @@ impl Graph {
         let mut glued_graph = unglued_graph.clone();
         let edge_to_var = sat_problem.edge_to_var;
         // iterate over the edges in the SAT problem
-        for ((u, v), var_index) in edge_to_var {
+        for (edge, var_index) in edge_to_var {
             if solver.value(
                 i32::try_from(*var_index)
                 .expect("Failed to convert var_index")
             ).expect("Failed to get variable value") 
             {
-                glued_graph.add_edge(*u, *v);
+                glued_graph.add_edge(*edge);
             }
         }
 
@@ -155,18 +155,49 @@ impl Graph {
     }
 }
 type BitSet = u32;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Edge(usize, usize);
+
+impl Edge {
+    fn new(a: usize, b: usize) -> Self {
+        if a <= b {
+            Edge(a, b)
+        } else {
+            Edge(b, a)
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SatProblem<'a> {
     pub clauses: Vec<Vec<i32>>,
-    pub edge_to_var: &'a HashMap<(usize, usize), u32>,
+    pub edge_to_var: &'a HashMap<Edge, u32>,
 }
-fn create_sat_problem<'a>(graph: &Graph, edge_to_var: &'a HashMap<(usize, usize), u32>) -> SatProblem<'a> {
-    let clauses = get_clauses(graph, &edge_to_var);
-    SatProblem { clauses, edge_to_var }
+fn create_sat_problem<'a>(graph: &Graph, sat_precursor: &'a SatPrecursor) -> SatProblem<'a> {
+    let clauses = get_clauses(graph, sat_precursor);
+    SatProblem { clauses, edge_to_var: &sat_precursor.edge_to_var }
+}
+pub struct SatPrecursor {
+    pub edge_to_var: HashMap<Edge, u32>,
+        // This is a mapping from edges to variable indices, which is used to create the SAT clauses
+    pub edge_sets: Vec<
+        (Vec<Edge>, Vec<Edge>)
+        >,
+        // This is a vector of tuples (check_edges, clause_edges)
+        // check_edges are edges that are already determined in the graph
+        // clause_edges are considered edges for gluing
 }
 
-fn get_edge_to_var(deg: usize, K_size: usize, x: usize) -> HashMap<(usize, usize), u32> {
+fn get_sat_precursor(deg: usize, K_size: usize, x: usize) -> SatPrecursor {
+    //
+    // This function creates some data needed for the SAT problem but only 
+    // dependent on the parameters deg, K_size, and x. Hence, it does not
+    // need to be computed for each graph. The data are:
+    // - a mapping from edges to variable indices, which is used to create the SAT clauses
+    // - a vec of tuples (check_edges, clause_edges)
+    // - check_edges are edges that are already determined in the graph
+    // - clause_edges are considered edges for gluing
+    // 
     let mut edge_to_var = HashMap::new();
     let A_size = deg - K_size - 1;
     let A = 2..(2 + A_size);
@@ -176,65 +207,61 @@ fn get_edge_to_var(deg: usize, K_size: usize, x: usize) -> HashMap<(usize, usize
 
     let edges = iproduct!(A.clone(), B.clone())
         .chain(iproduct!(X.clone(), ABK))
-        .chain(X.clone().combinations(2).map(|v| (v[0], v[1])));
+        .chain(X.clone().combinations(2).map(|v| (v[0], v[1])))
+        .map(|(a, b)| Edge::new(a, b));
 
     edge_to_var.extend(edges
         .enumerate()
-        .map(|(i, (a, b))| {
-        let var_index = i as u32 + 1; // Start variable indices from 1
-        ((a, b), var_index)
-    }));
- 
-    edge_to_var
+        .map(|(i, edge)| {
+            let var_index = i as u32 + 1; // Start variable indices from 1
+            (edge, var_index)
+        }));
+    let n = 2 + 2 * A_size + K_size + x;
+    let edge_sets = (0..n)
+        .combinations(5)
+        .par_bridge()
+        .filter_map(|set| {
+            let edges = set
+                .iter()
+                .combinations(2)
+                .map(|v| Edge::new(*v[0], *v[1]));
+            let mut check_edges = vec![];
+            let mut clause_edges = vec![];
+
+            for edge in edges {
+                if edge_to_var.contains_key(&edge) {
+                    clause_edges.push(edge); // edges to consider for gluing
+                } else {
+                    check_edges.push(edge); // edges already determined in the graph
+                }
+            }
+            if clause_edges.len() == 0 {
+                return None; // No edges to consider for gluing
+            }
+            Some((check_edges, clause_edges))
+        })
+        .collect::<Vec<_>>();
+    SatPrecursor {
+        edge_to_var,
+        edge_sets,
+    }
 }
 
-fn get_clauses(graph: &Graph, edge_to_var: &HashMap<(usize, usize), u32>) -> Vec<Vec<i32>> {
+fn get_clauses(graph: &Graph, sat_precursor: &SatPrecursor) -> Vec<Vec<i32>> {
     let mut clauses: Vec<Vec<i32>> = Vec::new();
+    let edge_to_var = &sat_precursor.edge_to_var;
 
-    let num_vertices = graph.num_vertices();
-
-    let five_sets = (0..num_vertices)
-        .combinations(5);
-        /*
-        .filter(|set| {
-            // check that either:
-            // 1. at least one vertex is in X
-            // 2. at least one vertex is in A and at least one vertex is in B
-            let bit_set = set.iter()
-                .map(|i| graph.get_bit(*i))
-                .fold(BitSet::default(), |acc, bit| acc | bit);
-            (bit_set & graph.structure.X_bits != 0) ||
-            (bit_set & graph.structure.A_bits != 0 && bit_set & graph.structure.B_bits != 0)
-        });
-        */
-
-    for five_set in five_sets {
-        let edges = five_set.iter().combinations(2).map(|v| (*v[0], *v[1]));
-
-        let mut check_edges = vec![];
-        let mut clause_edges = vec![];
-
-        for edge in edges {
-            if edge_to_var.contains_key(&edge) {
-                clause_edges.push(edge); // edges to consider for gluing
-            } else {
-                check_edges.push(edge); // edges already determined in the graph
-            }
-        }
-
-        if clause_edges.len() == 0 {
-            continue; // skip if there are no edges to consider
-        }
+    for (check_edges, clause_edges) in &sat_precursor.edge_sets {
 
         let num_missing_edges = check_edges.iter()
-            .filter(|&&(i, j)| !graph.has_edge(i, j))
+            .filter(|&&edge| graph.has_edge(edge))
             .count();
 
         // clauses for independent sets of size 5
-        if num_missing_edges == check_edges.len() { // 10 = 5 choose 2
+        if num_missing_edges == check_edges.len() { // all edges are missing
             let k5bar_clause: Vec<i32> = clause_edges
                 .iter()
-                .map(|&(i, j)| i32::try_from(edge_to_var[&(i, j)]).expect("Failed to convert index to i32 in k5bar_clause"))
+                .map(|edge| i32::try_from(edge_to_var[edge]).expect("Failed to convert index to i32 in k5bar_clause"))
                 .collect();
             clauses.push(k5bar_clause);
         }
@@ -242,18 +269,18 @@ fn get_clauses(graph: &Graph, edge_to_var: &HashMap<(usize, usize), u32>) -> Vec
         else if num_missing_edges <= 1 {
             let k5_clause: Vec<i32> = clause_edges
                 .iter()
-                .map(|&(i, j)| -i32::try_from(edge_to_var[&(i, j)]).expect("Failed to convert index to i32 in k5_clause"))
+                .map(|edge| -i32::try_from(edge_to_var[edge]).expect("Failed to convert index to i32 in k5_clause"))
                 .collect();
             clauses.push(k5_clause);
         }
         // clauses for cliques of size 5 minus an edge
         if num_missing_edges == 0 {
             // we want to create a clause for each edge 
-            for (i,j) in &clause_edges {
+            for edge in clause_edges {
                 let j5_clause: Vec<i32> = clause_edges
                     .iter()
-                    .filter(|&&(x, y)| x != *i || y != *j)
-                    .map(|&(x, y)| -i32::try_from(edge_to_var[&(x, y)]).expect("Failed to convert index to i32 in j5_clause"))
+                    .filter(|&edge2| edge2 != edge)
+                    .map(|edge| -i32::try_from(edge_to_var[edge]).expect("Failed to convert index to i32 in j5_clause"))
                     .collect();
                 clauses.push(j5_clause);
             }
@@ -290,7 +317,7 @@ fn decode_g6(line: &String) -> Vec<u32> {
     graph
 }
 
-fn _graph_to_g6(graph: &Graph) -> String {
+fn graph_to_g6(graph: &Graph) -> String {
     let num_vertices = u8::try_from(graph.num_vertices()).expect("num_vertices exceeds u8 limit");
     let size = u16::from(num_vertices) * (u16::from(num_vertices) - 1) / 2;
     let mut bit_vect: Vec<u8> = vec![0; size.into()];
@@ -298,7 +325,7 @@ fn _graph_to_g6(graph: &Graph) -> String {
     let mut i = 0;
     for column in 1..num_vertices {
         for row in 0..column {
-            let bit = graph.has_edge(row as usize, column as usize);
+            let bit = graph.has_edge(Edge::new(usize::from(row), usize::from(column))) as u8;
             bit_vect[i] = bit as u8;
             i += 1;
         }
@@ -314,4 +341,44 @@ fn _graph_to_g6(graph: &Graph) -> String {
         g6_str.push((fixed_letter + 63) as char);
     }
     g6_str
+}
+
+// tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clause_edge_good(edge: &Edge, deg: usize, K_size: usize) -> bool {
+        // checks if the edge is really a clause edge
+        // i.e. that either
+        // - one of its vertices is an extension vertex (> n)
+        // - one vertex is from A and the other from B
+        let n = 2 * deg - K_size;
+        if edge.0 >= n || edge.1 >= n {
+            return true; // extension vertex
+        }
+        let A_size = deg - K_size - 1;
+        let A = 2..(2 + A_size);
+        let B = (2 + A_size)..(2 + 2 * A_size);
+        (A.contains(&edge.0) && B.contains(&edge.1)) ||
+           (A.contains(&edge.1) && B.contains(&edge.0))
+    }
+
+    #[test]
+    fn test_sat_precursor() {
+        let deg = 14;
+        let K_size = 7;
+        let x = 0;
+        let sat_precursor = get_sat_precursor(deg, K_size, x);
+        for (check_edges, clause_edges) in &sat_precursor.edge_sets {
+            assert!(!clause_edges.is_empty(), "clause_edges should not be empty");
+            assert!(check_edges.iter().all(|edge| !clause_edge_good(edge, deg, K_size)),
+                "check edges should not be clause edges"
+            );
+            assert!(clause_edges.iter().all(|edge| clause_edge_good(edge, deg, K_size)),
+                "clause edges should be valid clause edges"
+            );
+        }
+        // println!("edge sets: {:?}", sat_precursor.edge_sets);
+    }
 }
