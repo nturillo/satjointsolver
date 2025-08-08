@@ -346,6 +346,8 @@ fn graph_to_g6(graph: &Graph) -> String {
 // tests
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashSet, hash::Hash};
+
     use super::*;
 
     fn clause_edge_good(edge: &Edge, deg: usize, K_size: usize) -> bool {
@@ -386,6 +388,11 @@ mod tests {
         let graph = Graph::from_graph6(&String::from("TiXAIa?_C@O?_@_C]UVhguebKKfBAUUUb~~?"));
         let sat_precursor = get_sat_precursor(14, 7, 0);
         let sat_problem = create_sat_problem(&graph, &sat_precursor);
+        let true_clause: Vec<Vec<i32>> = 
+        let true_clause_set = HashSet::from_iter(true_clause.iter().cloned());
+        let attempted_clause_set = HashSet::from_iter(sat_problem.clauses.iter().cloned());
+        assert_eq!(true_clause_set, attempted_clause_set, "The clauses generated do not match the expected clauses");
+        // println!("clauses: {:?}", sat_problem.clauses);
      }
     #[test]
     fn test_SAT_solution() {
