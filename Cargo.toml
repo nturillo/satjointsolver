@@ -3,6 +3,10 @@ name = "satjointsolver"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+regular = []
+complement = []
+
 [dependencies]
 clap = {version = "4.5.42", features = ["derive"]}
 mimalloc = "0.1"
