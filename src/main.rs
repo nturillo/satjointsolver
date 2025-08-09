@@ -65,11 +65,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         println!("Time taken: {:?}", start.elapsed());
         println!("Glued graph in graph6 format: {}", graph_to_g6(&glued_graph));
         x = x+1;
-        /*
-        if x > 1 {
-            todo!("x > 1 is not implemented yet, please implement the logic to handle x > 1");
-        }
-        */
         start = std::time::Instant::now();
         println!("Continuing with x = {}", x);
     }
@@ -94,6 +89,13 @@ fn get_glued_graph(lines: &[String], x: usize) -> Option<Graph> {
     let sat_precursor = get_sat_precursor(deg, K_size, x);
     lines.par_iter().find_map_any(|line| {
         let graph = Graph::from_graph6(line);
+        #[cfg(debug_assertions)]
+        {
+            let g_deg = graph.neighbor_set(0).count_ones() as usize;
+            let g_K_size = (graph.neighbor_set(0) & graph.neighbor_set(1)).count_ones() as usize;
+            assert!(g_deg == deg, "Graph degree does not match expected degree");
+            assert!(g_K_size == K_size, "Graph K size does not match expected K size");
+        }
         let ext_graph = graph.extend(x);
         let sat_problem = create_sat_problem(&ext_graph, &sat_precursor);
         let mut sat_solver: Solver = Default::default();
@@ -377,7 +379,7 @@ fn complement_clauses(num_missing_edges: usize, check_edge_len: usize, clause_ed
         clauses.push(k5bar_clause);
     }
     // clauses for independent sets of size 5 plus an edge
-    if num_missing_edges == 0 {
+    if num_missing_edges == check_edge_len { // all edges are missing
         for edge in clause_edges {
             let j5_clause: Vec<i32> = clause_edges
                 .iter()
