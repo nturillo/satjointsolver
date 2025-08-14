@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let path = Path::new(&infile_str);
     let file = File::open(&path)?;
     let reader = io::BufReader::new(file);
-    let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
+    let mut lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
 
     #[cfg(feature = "regular")]
     {
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     // Convert each line from graph6 format to a Graph object, create the SAT problem, and solve it
     let mut start = std::time::Instant::now();
-    while let Some(glued_graph) = get_glued_graph(&lines, x) {
+    while let Some((i, glued_graph)) = get_glued_graph(&lines, x) {
         println!(
             "Found glued graph with {} vertices, including {} extension vertices",
             glued_graph.num_vertices(),
@@ -73,6 +73,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         if glued_graph.num_vertices() == 31 {
             return Ok(());
         }
+        // don't research on graphs already searched for lower x
+        lines.drain(0..i);
+        println!("Eliminated {} graphs, {} graphs remaining", i, lines.len());
         x = x + 1;
         start = std::time::Instant::now();
         println!("Continuing with x = {}", x);
@@ -84,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     Ok(())
 }
 
-fn get_glued_graph(lines: &[String], x: usize) -> Option<Graph> {
+fn get_glued_graph(lines: &[String], x: usize) -> Option<(usize, Graph)> {
     //
     // This function takes a slice of graph6 strings and an integer x,
     // and tries to find a gluing of a graph from the input lines which
@@ -96,27 +99,36 @@ fn get_glued_graph(lines: &[String], x: usize) -> Option<Graph> {
     let K_size = (graph0.neighbor_set(0) & graph0.neighbor_set(1)).count_ones() as usize;
 
     let sat_precursor = get_sat_precursor(deg, K_size, x);
-    lines.par_iter().find_map_any(|line| {
-        let graph = Graph::from_graph6(line);
-        #[cfg(debug_assertions)]
-        {
-            let g_deg = graph.neighbor_set(0).count_ones() as usize;
-            let g_K_size = (graph.neighbor_set(0) & graph.neighbor_set(1)).count_ones() as usize;
-            assert!(g_deg == deg, "Graph degree does not match expected degree");
-            assert!(
-                g_K_size == K_size,
-                "Graph K size does not match expected K size"
-            );
-        }
-        let ext_graph = graph.extend(x);
-        let sat_problem = create_sat_problem(&ext_graph, &sat_precursor);
-        let mut sat_solver: Solver = Default::default();
-        sat_problem.clauses.iter().for_each(|clause| {
-            sat_solver.add_clause(clause.clone());
-        });
-        sat_solver.solve().expect("Failed to solve SAT problem");
-        Graph::from_sat_sol(&ext_graph, &sat_problem, &sat_solver)
-    })
+    lines
+        .par_iter()
+        .enumerate()
+        .by_exponential_blocks()
+        .find_map_any(|(i, line)| {
+            let graph = Graph::from_graph6(line);
+            #[cfg(debug_assertions)]
+            {
+                let g_deg = graph.neighbor_set(0).count_ones() as usize;
+                let g_K_size =
+                    (graph.neighbor_set(0) & graph.neighbor_set(1)).count_ones() as usize;
+                assert!(g_deg == deg, "Graph degree does not match expected degree");
+                assert!(
+                    g_K_size == K_size,
+                    "Graph K size does not match expected K size"
+                );
+            }
+            let ext_graph = graph.extend(x);
+            let sat_problem = create_sat_problem(&ext_graph, &sat_precursor);
+            let mut sat_solver: Solver = Default::default();
+            sat_problem.clauses.iter().for_each(|clause| {
+                sat_solver.add_clause(clause.clone());
+            });
+            sat_solver.solve().expect("Failed to solve SAT problem");
+            let res = Graph::from_sat_sol(&ext_graph, &sat_problem, &sat_solver);
+            if res.is_some() {
+                return Some((i, res.unwrap()));
+            }
+            return None;
+        })
 }
 
 #[derive(Debug, Clone)]
@@ -638,4 +650,3 @@ mod tests {
         );
     }
 }
-
