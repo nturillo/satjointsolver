@@ -39,6 +39,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let reader = io::BufReader::new(file);
     let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
 
+    #[cfg(feature = "regular")]
+    {
+        println!("Running SAT graph gluer in regular mode");
+    }
+    #[cfg(feature = "complement")]
+    {
+        println!("Running SAT graph gluer in complement mode");
+    }
+
     let num_graphs = lines.len();
     println!("Read: {} graphs from {}", num_graphs, infile_str);
 
@@ -56,11 +65,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         println!("Time taken: {:?}", start.elapsed());
         println!("Glued graph in graph6 format: {}", graph_to_g6(&glued_graph));
         x = x+1;
-        /*
-        if x > 1 {
-            todo!("x > 1 is not implemented yet, please implement the logic to handle x > 1");
-        }
-        */
         start = std::time::Instant::now();
         println!("Continuing with x = {}", x);
     }
@@ -85,6 +89,13 @@ fn get_glued_graph(lines: &[String], x: usize) -> Option<Graph> {
     let sat_precursor = get_sat_precursor(deg, K_size, x);
     lines.par_iter().find_map_any(|line| {
         let graph = Graph::from_graph6(line);
+        #[cfg(debug_assertions)]
+        {
+            let g_deg = graph.neighbor_set(0).count_ones() as usize;
+            let g_K_size = (graph.neighbor_set(0) & graph.neighbor_set(1)).count_ones() as usize;
+            assert!(g_deg == deg, "Graph degree does not match expected degree");
+            assert!(g_K_size == K_size, "Graph K size does not match expected K size");
+        }
         let ext_graph = graph.extend(x);
         let sat_problem = create_sat_problem(&ext_graph, &sat_precursor);
         let mut sat_solver: Solver = Default::default();
@@ -202,6 +213,7 @@ fn get_symm_break_clauses(n: usize, x: usize, edge_to_var: &HashMap<Edge, i32>) 
     //
     // This function creates symmetry breaking clauses for the SAT problem.
     // It ensures that the edges of the extension vertices are ordered lexicographically.
+    // Calls Python script symm_break.py to generate the clauses using sympy.
     // 
     if x <= 1 {
         return vec![]; // No symmetry breaking needed if there are no extension vertices
@@ -309,7 +321,83 @@ fn get_sat_precursor(deg: usize, K_size: usize, x: usize) -> SatPrecursor {
     }
 }
 
+fn regular_clauses(num_missing_edges: usize, check_edge_len: usize, clause_edges: &[Edge], edge_to_var: &HashMap<Edge, i32>) -> Vec<Vec<i32>> {
+    //
+    // Creates clauses to avoid the forbidden subgraphs J5, K5-bar in the regular case.
+    //
+    let mut clauses = Vec::new();
+    // clauses for independent sets of size 5
+    if num_missing_edges == check_edge_len { // all edges are missing
+        let k5bar_clause: Vec<i32> = clause_edges
+            .iter()
+            .map(|edge| edge_to_var[edge])
+            .collect();
+        clauses.push(k5bar_clause);
+    }
+    // clauses for cliques of size 5
+    else if num_missing_edges <= 1 {
+        let k5_clause: Vec<i32> = clause_edges
+            .iter()
+            .map(|edge| -edge_to_var[edge])
+            .collect();
+        clauses.push(k5_clause);
+    }
+    // clauses for cliques of size 5 minus an edge
+    if num_missing_edges == 0 {
+        // we want to create a clause for each edge 
+        for edge in clause_edges {
+            let j5_clause: Vec<i32> = clause_edges
+                .iter()
+                .filter(|&edge2| edge2 != edge)
+                .map(|edge| -edge_to_var[edge])
+                .collect();
+            clauses.push(j5_clause);
+        }
+    }
+    clauses
+}
+
+fn complement_clauses(num_missing_edges: usize, check_edge_len: usize, clause_edges: &[Edge], edge_to_var: &HashMap<Edge, i32>) -> Vec<Vec<i32>> {
+    //
+    // Creates clauses to avoid the forbidden subgraphs K5, J5-bar in the complement case.
+    //
+    let mut clauses = Vec::new();
+    // clauses for cliques of size 5
+    if num_missing_edges == 0 { // all edges are present
+        let k5_clause: Vec<i32> = clause_edges
+            .iter()
+            .map(|edge| -edge_to_var[edge])
+            .collect();
+        clauses.push(k5_clause);
+    }
+    // clauses for independent sets of size 5
+    if num_missing_edges >= check_edge_len-1 {
+        let k5bar_clause: Vec<i32> = clause_edges
+            .iter()
+            .map(|edge| edge_to_var[edge])
+            .collect();
+        clauses.push(k5bar_clause);
+    }
+    // clauses for independent sets of size 5 plus an edge
+    if num_missing_edges == check_edge_len { // all edges are missing
+        for edge in clause_edges {
+            let j5_clause: Vec<i32> = clause_edges
+                .iter()
+                .filter(|&edge2| edge2 != edge)
+                .map(|edge| edge_to_var[edge])
+                .collect();
+            clauses.push(j5_clause);
+        }
+    }
+    clauses
+}
+
 fn get_clauses(graph: &Graph, sat_precursor: &SatPrecursor) -> Vec<Vec<i32>> {
+    //
+    // This function creates the clauses for the SAT problem based on the graph and the sat_precursor.
+    // These clauses ensure that the graph avoids the desired forbidden subgraphs,
+    // either J5, K5-bar in the regular case, or K5, J5-bar in the complement case.
+    //
     let mut clauses: Vec<Vec<i32>> = Vec::new();
     let edge_to_var = &sat_precursor.edge_to_var;
 
@@ -319,33 +407,15 @@ fn get_clauses(graph: &Graph, sat_precursor: &SatPrecursor) -> Vec<Vec<i32>> {
             .filter(|&&edge| !graph.has_edge(edge))
             .count();
 
-        // clauses for independent sets of size 5
-        if num_missing_edges == check_edges.len() { // all edges are missing
-            let k5bar_clause: Vec<i32> = clause_edges
-                .iter()
-                .map(|edge| edge_to_var[edge])
-                .collect();
-            clauses.push(k5bar_clause);
+        #[cfg(feature = "regular")]
+        {
+            let regular_clauses = regular_clauses(num_missing_edges, check_edges.len(), clause_edges, edge_to_var);
+            clauses.extend(regular_clauses);
         }
-        // clauses for cliques of size 5
-        else if num_missing_edges <= 1 {
-            let k5_clause: Vec<i32> = clause_edges
-                .iter()
-                .map(|edge| -edge_to_var[edge])
-                .collect();
-            clauses.push(k5_clause);
-        }
-        // clauses for cliques of size 5 minus an edge
-        if num_missing_edges == 0 {
-            // we want to create a clause for each edge 
-            for edge in clause_edges {
-                let j5_clause: Vec<i32> = clause_edges
-                    .iter()
-                    .filter(|&edge2| edge2 != edge)
-                    .map(|edge| -edge_to_var[edge])
-                    .collect();
-                clauses.push(j5_clause);
-            }
+        #[cfg(feature = "complement")]
+        {
+            let complement_clauses = complement_clauses(num_missing_edges, check_edges.len(), clause_edges, edge_to_var);
+            clauses.extend(complement_clauses);
         }
     }
     clauses.extend(sat_precursor.symmetry_clauses.iter().cloned());
@@ -409,10 +479,6 @@ fn graph_to_g6(graph: &Graph) -> String {
 // tests
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet};
-
-    use serde_json::de;
-
     use super::*;
 
     #[test]
@@ -473,9 +539,9 @@ mod tests {
         sat_solver.solve_with(solution).expect("Failed to solve SAT problem with given solution");
         assert!(sat_solver.status().expect("Failed to get solver status"), "SAT solver did not find a solution");
     }
-    fn print_x_vecs(n: usize, x: usize, solver: &Solver, edge_to_var: &HashMap<Edge, i32>) {
-        for i in (2..n+x) {
-            for j in (n..n+x) {
+    fn _print_x_vecs(n: usize, x: usize, solver: &Solver, edge_to_var: &HashMap<Edge, i32>) {
+        for i in 2..n+x {
+            for j in n..n+x {
                 let var = edge_to_var.get(&Edge::new(i, j)).expect("Edge not found in edge_to_var");
                 let value = solver.value(*var).expect("Failed to get variable value");
                 print!("{} ", if value { 1 } else { 0 });
