@@ -103,7 +103,7 @@ fn get_glued_graph(lines: &[String], x: usize) -> Option<(usize, Graph)> {
         .par_iter()
         .enumerate()
         .by_exponential_blocks()
-        .find_map_any(|(i, line)| {
+        .find_map_first(|(i, line)| {
             let graph = Graph::from_graph6(line);
             #[cfg(debug_assertions)]
             {
