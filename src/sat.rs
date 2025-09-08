@@ -150,6 +150,7 @@ pub fn get_sat_precursor(deg: usize, K_size: usize, x: usize) -> SatPrecursor {
     }
 }
 
+#[allow(dead_code)]
 fn regular_clauses(
     num_missing_edges: usize,
     check_edge_len: usize,
@@ -186,6 +187,7 @@ fn regular_clauses(
     clauses
 }
 
+#[allow(dead_code)]
 fn complement_clauses(
     num_missing_edges: usize,
     check_edge_len: usize,

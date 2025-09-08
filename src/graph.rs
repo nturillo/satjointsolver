@@ -1,5 +1,6 @@
 use crate::sat::SatProblem;
 use cadical::Solver;
+use itertools::Itertools;
 
 #[derive(Debug, Clone)]
 pub struct Graph {
@@ -16,6 +17,13 @@ impl Graph {
             adjacency_matrix,
         }
     }
+    pub fn with_capacity(num_vertices: usize) -> Self {
+        let adjacency_matrix = vec![0; num_vertices];
+        Graph {
+            num_vertices,
+            adjacency_matrix
+        }
+    }
     pub fn has_edge(&self, edge: Edge) -> bool {
         self.adjacency_matrix[edge.0] & self.get_bit(edge.1) != 0
     }
@@ -25,6 +33,12 @@ impl Graph {
     }
     pub fn neighbor_set(&self, u: usize) -> BitSet {
         self.adjacency_matrix[u]
+    }
+    pub fn anti_neighbor_set (&self, i: usize) -> BitSet {
+        !self.get_bit(i) & !self.neighbor_set(i) & ((1 << self.num_vertices()) - 1)
+    }
+    pub fn bitset_to_vec(&self, bitset: BitSet) -> Vec<usize> {
+        (0..self.num_vertices()).filter(|&i| (bitset & self.get_bit(i)) != 0).collect()
     }
     pub fn num_vertices(&self) -> usize {
         self.num_vertices
@@ -42,6 +56,18 @@ impl Graph {
             new_adjacency_matrix.push(0);
         }
         Graph::new(new_adjacency_matrix)
+    }
+    pub fn from_subgraph(&self, subset: BitSet) -> Graph {
+        let mut res = Graph::with_capacity(subset.count_ones() as usize);
+        let potential_edges = self
+            .bitset_to_vec(subset)
+            .into_iter()
+            .combinations(2)
+            .map(|v| Edge(v[0], v[1]));
+        for e in potential_edges {
+            if self.has_edge(e) { res.add_edge(e); }
+        }
+        res
     }
     pub fn from_graph6(g6_str: &String) -> Self {
         Graph::new(decode_g6(g6_str))
@@ -70,7 +96,44 @@ impl Graph {
         Some(glued_graph)
     }
 }
-type BitSet = u32;
+
+pub struct Subgraph<'a> {
+    pub graph: &'a Graph,
+    pub bitvec: Vec<usize>
+}
+// implement vf2's trait (i.e. interface) for subgraphs to be able to use its
+// isomorphism iter
+impl <'a> vf2::Graph for Subgraph<'a> {
+    type EdgeLabel = ();
+    type NodeLabel = usize;
+
+    fn is_directed(&self) -> bool { false }
+    fn node_count(&self) -> usize { self.bitvec.len() }
+    fn contains_edge(&self, source: usize, target: usize) -> bool {
+        let edge = Edge(self.bitvec[source], self.bitvec[target]);
+        self.graph.has_edge(edge)
+    }
+    fn edge_label(&self, source: vf2::NodeIndex, target: vf2::NodeIndex) -> Option<&Self::EdgeLabel> {
+        if self.contains_edge(source, target) { return Some(&()) }
+        None
+    }
+    fn neighbors(&self, node: vf2::NodeIndex, direction: vf2::Direction) -> impl Iterator<Item = vf2::NodeIndex> {
+        let neighborset = self.graph.neighbor_set(self.bitvec[node]);
+        let mut res: Vec<usize> = vec![];
+        for (i, v) in self.bitvec.iter().enumerate() {
+            if self.graph.get_bit(*v) & neighborset == 1 {
+                res.push(i);
+            }
+        }
+        res.into_iter()
+    }
+    fn node_label(&self, node: vf2::NodeIndex) -> Option<&Self::NodeLabel> {
+        Some(&self.bitvec[node])
+    }
+}
+
+pub type BitSet = u32;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Edge(pub usize, pub usize);
 
@@ -132,4 +195,31 @@ pub fn graph_to_g6(graph: &Graph) -> String {
         g6_str.push((fixed_letter + 63) as char);
     }
     g6_str
+}
+
+#[cfg(test)]
+mod tests {
+    use vf2::Graph as _;
+
+    use super::*;
+
+    #[test]
+    fn test_subgraph() {
+        let mut G = Graph::with_capacity(4);
+        let a_nbhd = 0b1111;
+        G.add_edge(Edge(0, 1));
+        G.add_edge(Edge(2, 3));
+        let K = Subgraph{graph: &G, bitvec: G.bitset_to_vec(a_nbhd)};
+
+        assert!(K.node_count() == 4);
+        (0..4).combinations(2).for_each(
+            |edge_vec| {
+                let edge = Edge(edge_vec[0], edge_vec[1]);
+                assert!(
+                    K.contains_edge(edge_vec[0], edge_vec[1]) == G.has_edge(edge)
+                );
+            }
+        );
+ 
+    }
 }

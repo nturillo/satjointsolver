@@ -2,8 +2,10 @@
 
 mod graph;
 mod sat;
+mod pasting;
 use crate::graph::*;
 use crate::sat::*;
+use crate::pasting::*;
 
 use cadical::Solver;
 use clap::Parser;
