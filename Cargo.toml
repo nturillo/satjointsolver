@@ -16,4 +16,6 @@ rayon = "1.8"
 graph6 = "2.0.1"
 serde_json = "1.0.142"
 vf2 = "1.0.1"
-nauty-Traces-sys = {version = "0.10.0", features = ["native"]}
+nauty-Traces-sys = { version = "0.10.0", features = ["native"] }
+petgraph = "0.8.2"
+graph-canon = "0.1.4"

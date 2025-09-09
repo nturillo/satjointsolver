@@ -1,6 +1,13 @@
 use crate::sat::SatProblem;
 use cadical::Solver;
 use itertools::Itertools;
+use nauty_Traces_sys::{
+    densenauty, nauty_check, optionblk, statsblk, ADDONEEDGE, empty_graph, NAUTYVERSIONID,
+    SETWORDSNEEDED, TRUE, WORDSIZE,
+};
+use rayon::iter::empty;
+use std::io::{self, Write};
+use std::os::raw::c_int;
 
 #[derive(Debug, Clone)]
 pub struct Graph {
@@ -45,6 +52,81 @@ impl Graph {
     }
     pub fn get_bit(&self, i: usize) -> BitSet {
         1 << (self.num_vertices() - i - 1) as BitSet
+    }
+    pub fn canon_string(&self) -> String {
+        // invoke nauty to get canonical labeling
+        let mut options = optionblk::default();
+        options.getcanon = TRUE;
+        let mut stats = statsblk::default();
+        let n = self.num_vertices();
+        let m = SETWORDSNEEDED(n);
+
+        unsafe {
+            nauty_check(WORDSIZE as c_int, m as c_int, n as c_int, NAUTYVERSIONID as c_int);
+        }
+
+        let mut g = empty_graph(m, n);
+        (0..n).tuple_combinations()
+            .filter(|(v, w)| self.has_edge(Edge(*v, *w)))
+            .for_each(|(v, w)| {
+                ADDONEEDGE(&mut g, v, w, m);
+            });
+        let mut lab = vec![0; n];
+        let mut ptn = vec![0; n];
+        let mut orbits = vec![0; n];
+        let mut g_canon = empty_graph(m, n);
+        unsafe {
+                densenauty(
+                    g.as_mut_ptr(),
+                    lab.as_mut_ptr(),
+                    ptn.as_mut_ptr(),
+                    orbits.as_mut_ptr(),
+                    &mut options,
+                    &mut stats,
+                    m as c_int,
+                    n as c_int,
+                    g_canon.as_mut_ptr(),
+                );
+            }
+        let canon_graph = Graph::new(
+            (0..n).map(|i| g_canon[i] as BitSet).collect()
+        );
+        graph_to_g6(&canon_graph)
+    }
+    pub fn orbit_representatives(&self) -> Vec<usize> {
+        let mut options = optionblk::default();
+        let mut stats = statsblk::default();
+        let n = self.num_vertices();
+        let m = SETWORDSNEEDED(n);
+        unsafe {
+            nauty_check(WORDSIZE as c_int, m as c_int, n as c_int, NAUTYVERSIONID as c_int);
+        }
+        let mut lab = vec![0; n];
+        let mut ptn = vec![0; n];
+        let mut orbits = vec![0; n];
+        let mut g = empty_graph(m, n);
+        (0..n).tuple_combinations()
+            .filter(|(v, w)| self.has_edge(Edge(*v, *w)))
+            .for_each(|(v, w)| {
+                ADDONEEDGE(&mut g, v, w, m);
+            });
+        unsafe {
+            densenauty(
+                g.as_mut_ptr(),
+                lab.as_mut_ptr(),
+                ptn.as_mut_ptr(),
+                orbits.as_mut_ptr(),
+                &mut options,
+                &mut stats,
+                m as c_int,
+                n as c_int,
+                std::ptr::null_mut(),
+            );
+        }
+        // create a hash from the vec of orbits
+        std::collections::HashSet::<usize>::from_iter(
+            orbits.into_iter().map(|x| x as usize)
+        ).into_iter().collect::<Vec<usize>>()
     }
     pub fn extend(&self, x: usize) -> Graph {
         // Add x new vertices, which are not connected to any existing vertices
@@ -121,7 +203,8 @@ impl <'a> vf2::Graph for Subgraph<'a> {
         let neighborset = self.graph.neighbor_set(self.bitvec[node]);
         let mut res: Vec<usize> = vec![];
         for (i, v) in self.bitvec.iter().enumerate() {
-            if self.graph.get_bit(*v) & neighborset == 1 {
+            let bit = self.graph.get_bit(*v);
+            if (bit & neighborset) == bit {
                 res.push(i);
             }
         }
@@ -220,6 +303,11 @@ mod tests {
                 );
             }
         );
+
+        assert!(K.neighbors(0, vf2::Direction::Outgoing).collect::<Vec<_>>() == vec![1]);
+        assert!(K.neighbors(1, vf2::Direction::Outgoing).collect::<Vec<_>>() == vec![0]);
+        assert!(K.neighbors(2, vf2::Direction::Outgoing).collect::<Vec<_>>() == vec![3]);
+        assert!(K.neighbors(3, vf2::Direction::Outgoing).collect::<Vec<_>>() == vec![2]);
  
     }
 }

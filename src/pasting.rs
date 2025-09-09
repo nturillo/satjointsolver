@@ -4,17 +4,15 @@
 use crate::graph::{BitSet, Edge, Graph, Subgraph};
 use std::collections::HashMap;
 use itertools::Itertools;
+use std::io::BufRead;
 
 
-/*
-pub fn get_all_pastes(infile: &str, outdir: &str, complement: bool) -> Result<(), Infallible> {
-    let graphs = todo!();
-    println!("Read {} graphs from {}", graphs.len(), infile);
-    println!();
+pub fn run_pasting(infile: &str, outdir: &str, complement: bool) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    let graphs_with_orbits = read_graphs_and_orbits_from_file(infile);
     let start = std::time::Instant::now();
-    let mut K_class_to_graphs: HashMap<CanonLabeling, Vec<(u8, &Graph)>> = HashMap::new();
+    let mut K_class_to_graphs: HashMap<String, Vec<(usize, &Graph)>> = HashMap::new();
 
-    for graph in &graphs {
+    for (graph, orbit_reps) in &graphs_with_orbits {
         for v in 0..graph.num_vertices() {
             let K_bits: BitSet = graph.neighbor_set(v);
             let K = petgraph_from_graph(graph, K_bits);
@@ -55,7 +53,6 @@ pub fn get_all_pastes(infile: &str, outdir: &str, complement: bool) -> Result<()
     println!("Processed all K_classes in {:?}", elapsed2);
     Ok(())
 }
-*/
 
 fn get_k_mappings<'a>(
     K1: &'a Subgraph,
@@ -139,6 +136,26 @@ fn try_paste_together(
         .collect::<Vec<Graph>>()
 }
 
+fn read_graphs_and_orbits_from_file(infile: &str) -> Vec<(Graph, Vec<usize>)> {
+    // each line of the file is
+    // graph6_string orbit_rep_1 orbit_rep_2 ... orbit_rep_k
+    let path = std::path::Path::new(infile);
+    let file = std::fs::File::open(&path).expect("Failed to open input file");
+    let reader = std::io::BufReader::new(file);
+    let mut graphs_with_orbits: Vec<(Graph, Vec<usize>)> = Vec::new();
+    for line in reader.lines() {
+        let line = line.expect("Failed to read line from input file");
+        let mut parts = line.split_whitespace();
+        if let Some(g6_str) = parts.next() {
+            let g = Graph::from_graph6(&g6_str.to_string());
+            let orbit: Vec<usize> = parts
+                .map(|s| s.parse::<usize>().expect("Failed to parse orbit representative"))
+                .collect();
+            graphs_with_orbits.push((g, orbit));
+        }
+    }
+    graphs_with_orbits
+}
 
 #[cfg(test)]
 mod tests {
@@ -159,13 +176,12 @@ mod tests {
 
         let K1 = Subgraph{graph: &G, bitvec: G.bitset_to_vec(a_nbhd)};
         let K2 = Subgraph{graph: &H, bitvec: H.bitset_to_vec(b_nbhd)};
-        let k_mappings: Vec<_> = get_k_mappings(&K1, &K2).collect();
         let k_mapping_count = get_k_mappings(&K1, &K2).count();
-        //assert!(k_mapping_count == 2);
+        assert!(k_mapping_count == 6);
 
         get_k_mappings(&K1, &K2)
             .for_each(|mapping| {
-                for (u, v) in (0..8).tuple_combinations() {
+                for (u, v) in (0..4).tuple_combinations() {
                     assert!(K1.contains_edge(u, v) == K2.contains_edge(mapping[u], mapping[v]));
                 }
             });
@@ -174,7 +190,7 @@ mod tests {
     fn test_mappings2() {
         for i in 1..10 {
             let G = Graph::new(vec![0; i]);
-            let a_nbhd = (1 << i) - 1; // all vertices are neighbors
+            let a_nbhd = (1 << i) - 1;
             let i_factorial = (1..=i as u128).product::<u128>();
             let K = Subgraph{graph: &G, bitvec: G.bitset_to_vec(a_nbhd)};
             assert!(get_k_mappings(&K, &K).count() == i_factorial as usize);
