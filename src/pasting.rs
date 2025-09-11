@@ -13,7 +13,7 @@ pub fn run_pasting(infile: &str, outdir: &str, complement: bool) -> Result<(), B
     let mut K_class_to_graphs: HashMap<String, Vec<(usize, &Graph)>> = HashMap::new();
 
     for (graph, orbit_reps) in &graphs_with_orbits {
-        for v in 0..graph.num_vertices() {
+        for v in orbit_reps {
             let K_bits: BitSet = graph.neighbor_set(v);
             let K_vec = graph.bitset_to_vec(K_bits);
             let K_class = graph.canon_string(&K_vec);
