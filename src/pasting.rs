@@ -1,20 +1,24 @@
 // pasting is the process of making the gluing problems by pasting together
 // two pointed graphs A, B along a shared subgraph K
 
-use crate::graph::{BitSet, Edge, Graph, Subgraph};
+use crate::graph::{Edge, Graph, Subgraph, read_graphs_from_file, setword};
 use std::collections::HashMap;
 use itertools::Itertools;
-use std::io::BufRead;
+use std::io::{BufRead, Write};
+use std::fs::File;
+use std::io::BufWriter;
+use rayon::prelude::*;
 
 
-pub fn run_pasting(infile: &str, outdir: &str, complement: bool) -> Result<(), Box<dyn std::error::Error + 'static>> {
-    let graphs_with_orbits = read_graphs_and_orbits_from_file(infile);
+pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    let graphs = read_graphs_from_file(infile);
     let start = std::time::Instant::now();
     let mut K_class_to_graphs: HashMap<String, Vec<(usize, &Graph)>> = HashMap::new();
 
-    for (graph, orbit_reps) in &graphs_with_orbits {
+    for graph in &graphs {
+        let orbit_reps = graph.orbit_representatives();
         for v in orbit_reps {
-            let K_bits: BitSet = graph.neighbor_set(v);
+            let K_bits: setword = graph.neighbor_set(v);
             let K_vec = graph.bitset_to_vec(K_bits);
             let K_class = graph.canon_string(&K_vec);
             K_class_to_graphs.entry(K_class)
@@ -28,10 +32,13 @@ pub fn run_pasting(infile: &str, outdir: &str, complement: bool) -> Result<(), B
     println!();
 
     let start2 = std::time::Instant::now();
-    for (K_class, gs) in K_class_to_graphs {
+    let K_class_file  = format!("{}/K_classes.txt", outdir);
+    let mut kclass_writer = BufWriter::new(File::create(&K_class_file).expect("Failed to create K_class file"));
+    for (i, (K_class, gs)) in K_class_to_graphs.iter().enumerate() {
         let mut num_pastes: u128 = 0;
-        println!("Processing {} graphs in K_class {:?}", gs.len(), K_class);
-        let outfile = format!("{}/K_class_{}.g6", outdir, K_class);
+        println!("Processing {} graphs in K_class {:?}, number {}", gs.len(), K_class, i);
+        writeln!(kclass_writer, "{} {}", i, K_class).expect("Failed to write to K_class file");
+        let outfile = format!("{}/K_class_{}.g6", outdir, i);
 
         let file = File::create(&outfile).expect("Failed to create/truncate output file");
         let mut writer = BufWriter::new(file);
@@ -40,11 +47,15 @@ pub fn run_pasting(infile: &str, outdir: &str, complement: bool) -> Result<(), B
             .for_each(|(a, G)|{
                 let pastes = gs.par_iter()
                     .flat_map(|(b, H)| {
-                        try_paste_together(*a, G, *b, H, complement)
+                        try_paste_together(*a, G, *b, H)
                     })
                     .collect::<Vec<_>>();
                 num_pastes += pastes.len() as u128;
-                write_graphs_to_buffer(&pastes, &mut writer);
+                pastes.iter()
+                    .for_each(|pastes| {
+                        let g6_str = pastes.to_g6();
+                        writeln!(writer, "{}", g6_str).expect("Failed to write to output file");
+                    });
             });
         writer.flush().expect("Failed to flush buffer");
         println!("Processed K_class {} with {} pastes", K_class, num_pastes);
@@ -59,6 +70,14 @@ fn get_k_mappings<'a>(
     K2: &'a Subgraph,
 ) -> impl Iterator<Item = Vec<usize>> + 'a {
     vf2::isomorphisms(K1,K2).iter()
+        .map(|mapping| {
+            let mut iso = vec![0; K1.graph.num_vertices()];
+            mapping.iter().enumerate()
+                .for_each(|(i, &v)| {
+                    iso[K1.bitvec[i]] = K2.bitvec[v];
+                });
+            iso
+        })
 }
 
 fn try_paste_together(
@@ -66,7 +85,6 @@ fn try_paste_together(
     G: &Graph,
     b: usize,
     H: &Graph,
-    complement: bool,
 ) -> Vec<Graph> {
     let degree = G.num_vertices();
     let a_nbhd = G.neighbor_set(a);
@@ -114,18 +132,20 @@ fn try_paste_together(
         F.add_edge(Edge(1, G_to_F[&v])); // b connected to all vertices in A
     }
 
-    let K1 = Subgraph{graph: &G, bitvec: G.bitset_to_vec(a_nbhd)};
-    let K2 = Subgraph{graph: &H, bitvec: H.bitset_to_vec(b_nbhd)};
+    let K1_bitvec = G.bitset_to_vec(a_nbhd);
+    let K2_bitvec = H.bitset_to_vec(b_nbhd);
+    let K1 = Subgraph::new(&G, K1_bitvec);
+    let K2 = Subgraph::new(&H, K2_bitvec);
 
-    get_k_mappings(&K1, &K2)
+    get_k_mappings(&K2, &K1)
         .map(|mapping| {
             let mut F_copy = F.clone();
             for &v in B.iter() {
                 let v_nbhd = H.neighbor_set(v) & b_nbhd;
+                let v_in_F = H_to_F.get(&v).expect("Vertex not found in H_to_F");
                 H.bitset_to_vec(v_nbhd)
                     .iter()
                     .for_each(|&u| {
-                        let v_in_F = H_to_F.get(&v).expect("Vertex not found in H_to_F");
                         let u_to_G = mapping.get(u).expect("Vertex not found in mapping");
                         let u_in_F = G_to_F.get(u_to_G).expect("Vertex not found in G_to_F");
                         F_copy.add_edge(Edge(*v_in_F, *u_in_F));
@@ -174,8 +194,8 @@ mod tests {
         let H = G.clone();
         let b_nbhd = a_nbhd.clone();
 
-        let K1 = Subgraph{graph: &G, bitvec: G.bitset_to_vec(a_nbhd)};
-        let K2 = Subgraph{graph: &H, bitvec: H.bitset_to_vec(b_nbhd)};
+        let K1 = Subgraph::new(&G, G.bitset_to_vec(a_nbhd));
+        let K2 = Subgraph::new(&H, H.bitset_to_vec(b_nbhd));
         let k_mapping_count = get_k_mappings(&K1, &K2).count();
         assert!(k_mapping_count == 6);
 
@@ -192,7 +212,7 @@ mod tests {
             let G = Graph::new(vec![0; i]);
             let a_nbhd = (1 << i) - 1;
             let i_factorial = (1..=i as u128).product::<u128>();
-            let K = Subgraph{graph: &G, bitvec: G.bitset_to_vec(a_nbhd)};
+            let K = Subgraph::new(&G, G.bitset_to_vec(a_nbhd));
             assert!(get_k_mappings(&K, &K).count() == i_factorial as usize);
         }
     }

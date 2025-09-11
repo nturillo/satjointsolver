@@ -37,8 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     // Parse command line arguments
     let args = Args::parse();
     if args.pasting {
-        println!("Running pasting on input file: {}", args.input);
-        run_pasting(&args.input, args.x, &args.outdir)?;
+        println!("Running pasting on input file: {}, pasted graphs will be written to {}", args.input, args.outdir);
+        run_pasting(&args.input, &args.outdir)?;
     }
     else {
         println!("Running SAT solver on input file: {}", args.input);

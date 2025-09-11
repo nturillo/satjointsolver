@@ -46,7 +46,7 @@ pub fn run_satsolver(x: usize, infile_str: &str) -> Result<(), Box<dyn std::erro
         println!("Time taken: {:?}", start.elapsed());
         println!(
             "Glued graph in graph6 format: {}",
-            graph_to_g6(&glued_graph)
+            glued_graph.to_g6()
         );
         if glued_graph.num_vertices() == 31 {
             return Ok(());
