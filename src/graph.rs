@@ -53,7 +53,7 @@ impl Graph {
     pub fn get_bit(&self, i: usize) -> BitSet {
         1 << (self.num_vertices() - i - 1) as BitSet
     }
-    pub fn canon_string(&self) -> String {
+    pub fn canon_string(&self, bitvec: &Vec<usize>) -> String {
         // invoke nauty to get canonical labeling
         let mut options = optionblk::default();
         options.getcanon = TRUE;
@@ -65,9 +65,9 @@ impl Graph {
             nauty_check(WORDSIZE as c_int, m as c_int, n as c_int, NAUTYVERSIONID as c_int);
         }
 
-        let mut g = empty_graph(m, n);
-        (0..n).tuple_combinations()
-            .filter(|(v, w)| self.has_edge(Edge(*v, *w)))
+        let mut g = empty_graph(m, bitvec.len());
+        (0..bitvec.len()).tuple_combinations()
+            .filter(|(v, w)| self.has_edge(Edge(bitvec[*v], bitvec[*w])))
             .for_each(|(v, w)| {
                 ADDONEEDGE(&mut g, v, w, m);
             });
@@ -89,7 +89,7 @@ impl Graph {
                 );
             }
         let canon_graph = Graph::new(
-            (0..n).map(|i| g_canon[i] as BitSet).collect()
+            (0..bitvec.len()).map(|i| g_canon[i] as BitSet).collect()
         );
         graph_to_g6(&canon_graph)
     }
