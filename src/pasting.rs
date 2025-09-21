@@ -9,21 +9,43 @@ use std::fs::File;
 use std::io::BufWriter;
 use rayon::prelude::*;
 
+struct PointedGraph<'a> {
+    graph: &'a Graph,
+    point: usize, // marked vertex in graph; representative from its orbit
+    K_to_canon: Vec<usize>, // mapping from K in graph to canonical K
+    canon_to_K: Vec<usize>, // mapping from canonical K to K in graph
+}
 
 pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error::Error + 'static>> {
     let graphs = read_graphs_from_file(infile);
     let start = std::time::Instant::now();
-    let mut K_class_to_graphs: HashMap<String, Vec<(usize, &Graph)>> = HashMap::new();
+    let mut K_class_to_graphs: HashMap<String, Vec<PointedGraph>> = HashMap::new();
 
     for graph in &graphs {
         let orbit_reps = graph.orbit_representatives();
         for v in orbit_reps {
             let K_bits: setword = graph.neighbor_set(v);
             let K_vec = graph.bitset_to_vec(K_bits);
-            let K_class = graph.canon_string(&K_vec);
-            K_class_to_graphs.entry(K_class)
+            let K_canon= graph.canon(&K_vec);
+            let K_string = K_canon.to_g6();
+            let K_to_canon= get_k_mappings(
+                // map from graph's K to canonical K
+                &Subgraph::new(graph, K_vec.clone()),
+                &Subgraph::new(&K_canon, K_canon.bitset_to_vec(K_canon.get_all_bits()))
+            ).next().unwrap();
+            let canon_to_K = get_k_mappings(
+                &Subgraph::new(&K_canon, K_canon.bitset_to_vec(K_canon.get_all_bits())),
+                &Subgraph::new(graph, K_vec.clone())
+            ).next().unwrap();
+            let pointed_graph = PointedGraph {
+                graph,
+                point: v,
+                K_to_canon,
+                canon_to_K,
+            };
+            K_class_to_graphs.entry(K_string)
                 .or_insert_with(Vec::new)
-                .push((v, graph));
+                .push(pointed_graph);
         }
     }
 
@@ -43,11 +65,23 @@ pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error:
         let file = File::create(&outfile).expect("Failed to create/truncate output file");
         let mut writer = BufWriter::new(file);
 
+        if (K_class == "DGC") {
+            for G in gs {
+                println!("G with a = {}: {}", G.point, G.graph.to_g6());
+            }
+        }
+
+        let K_canon = Graph::from_graph6(&K_class);
+        let K_automorphisms = get_k_mappings(
+            &Subgraph::new(&K_canon, K_canon.bitset_to_vec(K_canon.get_all_bits())),
+            &Subgraph::new(&K_canon, K_canon.bitset_to_vec(K_canon.get_all_bits()))
+        ).collect::<Vec<_>>();
+
         gs.iter()
-            .for_each(|(a, G)|{
+            .for_each(|G|{
                 let pastes = gs.par_iter()
-                    .flat_map(|(b, H)| {
-                        try_paste_together(*a, G, *b, H)
+                    .flat_map(|H| {
+                        try_paste_together(G, H, &K_automorphisms)
                     })
                     .collect::<Vec<_>>();
                 num_pastes += pastes.len() as u128;
@@ -59,6 +93,11 @@ pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error:
             });
         writer.flush().expect("Failed to flush buffer");
         println!("Processed K_class {} with {} pastes", K_class, num_pastes);
+
+        #[cfg(debug_assertions)]
+        {
+            assert!(num_pastes == (gs.len() * gs.len() * K_automorphisms.len()) as u128);
+        }
     }
     let elapsed2 = start2.elapsed();
     println!("Processed all K_classes in {:?}", elapsed2);
@@ -81,11 +120,15 @@ fn get_k_mappings<'a>(
 }
 
 fn try_paste_together(
-    a: usize,
-    G: &Graph,
-    b: usize,
-    H: &Graph,
+    G_pointed: &PointedGraph,
+    H_pointed: &PointedGraph,
+    K_automorphisms: &Vec<Vec<usize>>,
 ) -> Vec<Graph> {
+    let G = G_pointed.graph;
+    let H = H_pointed.graph;
+    let a = G_pointed.point;
+    let b = H_pointed.point;
+
     let degree = G.num_vertices();
     let a_nbhd = G.neighbor_set(a);
     let b_nbhd = H.neighbor_set(b);
@@ -137,7 +180,7 @@ fn try_paste_together(
     let K1 = Subgraph::new(&G, K1_bitvec);
     let K2 = Subgraph::new(&H, K2_bitvec);
 
-    get_k_mappings(&K2, &K1)
+    K_automorphisms.iter()
         .map(|mapping| {
             let mut F_copy = F.clone();
             for &v in B.iter() {
@@ -146,8 +189,8 @@ fn try_paste_together(
                 H.bitset_to_vec(v_nbhd)
                     .iter()
                     .for_each(|&u| {
-                        let u_to_G = mapping.get(u).expect("Vertex not found in mapping");
-                        let u_in_F = G_to_F.get(u_to_G).expect("Vertex not found in G_to_F");
+                        let u_to_G = G_pointed.canon_to_K[mapping[H_pointed.K_to_canon[u]]];
+                        let u_in_F = G_to_F.get(&u_to_G).expect("Vertex not found in G_to_F");
                         F_copy.add_edge(Edge(*v_in_F, *u_in_F));
                     });
             }

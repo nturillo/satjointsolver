@@ -1,5 +1,5 @@
 [package]
-name = "satjointsolver"
+name = "ramsey_solver"
 version = "0.1.0"
 edition = "2024"
 

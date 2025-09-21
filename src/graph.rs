@@ -56,7 +56,7 @@ impl Graph {
     pub fn get_all_bits(&self) -> setword {
         (setword::MAX >> (WORDSIZE as usize - self.num_vertices())) << (WORDSIZE as usize - self.num_vertices())
     }
-    pub fn canon_string(&self, bitvec: &Vec<usize>) -> String {
+    pub fn canon(&self, bitvec: &Vec<usize>) -> Graph {
         // invoke nauty to get canonical labeling
         let mut options = optionblk::default();
         options.getcanon = TRUE;
@@ -96,7 +96,7 @@ impl Graph {
         let canon_graph = Graph::new(
             (0..bitvec.len()).map(|i| g_canon[i] as setword).collect()
         );
-        canon_graph.to_g6()
+        canon_graph
     }
     pub fn orbit_representatives(&self) -> HashSet<usize> {
         let mut options = optionblk::default();
@@ -336,7 +336,8 @@ mod tests {
     #[test]
     fn canon_g6() {
         let peterson_graph = Graph::from_graph6("IheA@GUAo");
-        let peterson_canon = peterson_graph.canon_string(&(0..peterson_graph.num_vertices()).collect::<Vec<_>>());
+        let peterson_canon = peterson_graph.canon(&(0..peterson_graph.num_vertices()).collect::<Vec<_>>());
+        let peterson_canon = peterson_canon.to_g6();
         assert!(peterson_canon == "IsP@OkWHG")
     }
 
