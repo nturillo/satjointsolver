@@ -309,7 +309,7 @@ fn complement_clauses(
         clauses.push(k5_clause);
     }
     // clauses for independent sets of size 5
-    if num_missing_edges >= check_edge_len - 1 {
+    if num_missing_edges + 1 >= check_edge_len {
         let k5bar_clause: Vec<i32> = clause_edges.iter().map(|edge| edge_to_var[edge]).collect();
         clauses.push(k5bar_clause);
     }

@@ -31,6 +31,12 @@ impl Graph {
             adjacency_matrix
         }
     }
+    pub fn vertices(&self) -> Vec<usize> {
+        (0..self.num_vertices()).collect()
+    }
+    pub fn degree(&self, v: usize) -> usize {
+        self.neighbor_set(v).count_ones() as usize
+    }
     pub fn has_edge(&self, edge: Edge) -> bool {
         self.adjacency_matrix[edge.0] & self.get_bit(edge.1) != 0
     }
@@ -136,9 +142,6 @@ impl Graph {
     pub fn extend(&self, x: usize) -> Graph {
         // Add x new vertices, which are not connected to any existing vertices
         let mut new_adjacency_matrix = self.adjacency_matrix.clone();
-        for set in &mut new_adjacency_matrix {
-            *set <<= x as setword; // Shift existing bits to make space for new vertices
-        }
         for _ in 0..x {
             new_adjacency_matrix.push(0);
         }
