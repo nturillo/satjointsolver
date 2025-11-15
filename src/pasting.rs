@@ -2,6 +2,7 @@
 // two pointed graphs A, B along a shared subgraph K
 
 use crate::graph::{Edge, Graph, Subgraph, read_graphs_from_file, setword};
+use core::num;
 use std::collections::HashMap;
 use itertools::Itertools;
 use std::io::{BufRead, Write};
@@ -16,10 +17,13 @@ struct PointedGraph<'a> {
     canon_to_K: Vec<usize>, // mapping from canonical K to K in graph
 }
 
-pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error::Error + 'static>> {
+pub fn run_pasting(infile: &str, outdir: &str, dry: bool) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    // bool - if true, don't actual calculate the pastes, just count the number of them per K isomorphism class
+
     let graphs = read_graphs_from_file(infile);
     let start = std::time::Instant::now();
     let mut K_class_to_graphs: HashMap<String, Vec<PointedGraph>> = HashMap::new();
+    let mut K_class_to_num_graphs: HashMap<String, u128> = HashMap::new();
 
     for graph in &graphs {
         let orbit_reps = graph.orbit_representatives();
@@ -55,27 +59,30 @@ pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error:
 
     let start2 = std::time::Instant::now();
     let K_class_file  = format!("{}/K_classes.txt", outdir);
-    let mut kclass_writer = BufWriter::new(File::create(&K_class_file).expect("Failed to create K_class file"));
+    let mut kclass_writer: Option<BufWriter<File>> = None;
+    if !dry {
+        kclass_writer = Some(BufWriter::new(File::create(&K_class_file).expect("Failed to create K_class file")));
+    }
     for (i, (K_class, gs)) in K_class_to_graphs.iter().enumerate() {
-        let mut num_pastes: u128 = 0;
+        let mut num_pastes_actual: u128 = 0;
         println!("Processing {} graphs in K_class {:?}, number {}", gs.len(), K_class, i);
-        writeln!(kclass_writer, "{} {}", i, K_class).expect("Failed to write to K_class file");
-        let outfile = format!("{}/K_class_{}.g6", outdir, i);
-
-        let file = File::create(&outfile).expect("Failed to create/truncate output file");
-        let mut writer = BufWriter::new(file);
-
-        if (K_class == "DGC") {
-            for G in gs {
-                println!("G with a = {}: {}", G.point, G.graph.to_g6());
-            }
-        }
 
         let K_canon = Graph::from_graph6(&K_class);
         let K_automorphisms = get_k_mappings(
             &Subgraph::new(&K_canon, K_canon.bitset_to_vec(K_canon.get_all_bits())),
             &Subgraph::new(&K_canon, K_canon.bitset_to_vec(K_canon.get_all_bits()))
         ).collect::<Vec<_>>();
+
+        let num_pastes = (gs.len() * gs.len() * K_automorphisms.len()) as u128;
+        K_class_to_num_graphs.insert(K_class.to_string(), num_pastes);
+
+        if !dry {
+        if let Some(ref mut w) = kclass_writer {
+            writeln!(w, "{} {}", i, K_class).expect("Failed to write to K_class file");
+        }
+        let outfile = format!("{}/K_class_{}.g6", outdir, i);
+        let file = File::create(&outfile).expect("Failed to create/truncate output file");
+        let mut writer = BufWriter::new(file);
 
         gs.iter()
             .for_each(|G|{
@@ -84,7 +91,7 @@ pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error:
                         try_paste_together(G, H, &K_automorphisms)
                     })
                     .collect::<Vec<_>>();
-                num_pastes += pastes.len() as u128;
+                num_pastes_actual += pastes.len() as u128;
                 pastes.iter()
                     .for_each(|pastes| {
                         let g6_str = pastes.to_g6();
@@ -92,16 +99,37 @@ pub fn run_pasting(infile: &str, outdir: &str) -> Result<(), Box<dyn std::error:
                     });
             });
         writer.flush().expect("Failed to flush buffer");
-        println!("Processed K_class {} with {} pastes", K_class, num_pastes);
+        }
 
         #[cfg(debug_assertions)]
         {
-            assert!(num_pastes == (gs.len() * gs.len() * K_automorphisms.len()) as u128);
+            assert!((num_pastes == num_pastes_actual) | dry);
         }
+
+        println!("Processed K_class {} with {} pastes", K_class, num_pastes);
     }
     let elapsed2 = start2.elapsed();
     println!("Processed all K_classes in {:?}", elapsed2);
+
+    if dry {
+        print_paste_stats(&K_class_to_num_graphs);
+    }
     Ok(())
+}
+
+fn print_paste_stats(map: &HashMap<String, u128>) {
+    let total: u128 = map.values().sum();
+    // Create a vector of (key, value) pairs and sort by value descending
+    let mut items: Vec<(&String, &u128)> = map.iter().collect();
+    items.sort_by(|a, b| b.1.cmp(a.1)); // sort by value descending
+
+    // Print sorted list with percentages
+    println!();
+    for (key, value) in items {
+        let percent = (*value as f64 / total as f64) * 100.0;
+        println!("K_class: {:<10} {:>5} ({:>5.2}%)", key, value, percent);
+    }
+    println!("Total: {},", total);
 }
 
 fn get_k_mappings<'a>(

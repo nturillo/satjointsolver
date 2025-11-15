@@ -19,13 +19,21 @@ struct Args {
     // outdirectory for output files
     #[arg(short, long, default_value_t = String::from("."))]
     outdir: String,
+
+    // if dry, don't actual make pastes just count them
+    #[arg(short, long, default_value_t = false)]
+    dry: bool
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     // Parse command line arguments
     let args = Args::parse();
-    println!("Running pasting on input file: {}, pasted graphs will be written to {}", args.input, args.outdir);
-    run_pasting(&args.input, &args.outdir)?;
+    if !args.dry {
+        println!("Running pasting on input file: {}, pasted graphs will be written to {}", args.input, args.outdir);
+    } else {
+        println!("Running dry pasting on input file: {}, pasted graphs will not be written", args.input);
+    }
+    run_pasting(&args.input, &args.outdir, args.dry)?;
     Ok(())
 }
 
